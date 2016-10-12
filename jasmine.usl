@@ -1,0 +1,487 @@
+//
+// Author: Andre Steenveld (andre.steenveld-at-gmail.com)
+//
+// Summary:
+// 		This is an adopted copy of the jasmine JSON parser for SIMPL+ so that it works on crestron machines.
+// 		Jasmine was orginally written in C and can be found at: https://github.com/zserge/jsmn
+//
+// Full license text:
+// 		MIT License
+//
+// 		Copyright (c) 2016 Andre Steenveld
+//
+// 		Permission is hereby granted, free of charge, to any person obtaining a copy
+// 		of this software and associated documentation files (the "Software"), to deal
+// 		in the Software without restriction, including without limitation the rights
+// 		to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// 		copies of the Software, and to permit persons to whom the Software is
+// 		furnished to do so, subject to the following conditions:
+//
+// 		The above copyright notice and this permission notice shall be included in all
+// 		copies or substantial portions of the Software.
+//
+// 		THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// 		IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// 		FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// 		AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// 		LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// 		OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// 		SOFTWARE.
+//
+
+//Useful characters that we'll need in parsing metadata
+#DEFINE_CONSTANT CR 0x0D		 	// Carriage return
+#DEFINE_CONSTANT LF 0x0A		 	// Linefeed
+#DEFINE_CONSTANT TAB 0x09		 	// Tab
+#DEFINE_CONSTANT SPACE 0x20	   		// Space
+#DEFINE_CONSTANT DBLQUOTE 0x22	   	// "
+#DEFINE_CONSTANT BACKSLASH 0x5C	   	// \
+
+// #DEFINE_CONSTANT JSMN_DEBUG 0
+
+/**
+ * JSON type identifier. Basic types are:
+ * 	o Object
+ * 	o Array
+ * 	o String
+ * 	o Other primitive: number, boolean (true/false) or null
+ */
+#DEFINE_CONSTANT JSMN_TYPE_UNDEFINED 0
+#DEFINE_CONSTANT JSMN_TYPE_OBJECT 1
+#DEFINE_CONSTANT JSMN_TYPE_ARRAY 2
+#DEFINE_CONSTANT JSMN_TYPE_STRING 3
+#DEFINE_CONSTANT JSMN_TYPE_PRIMITIVE 4
+
+/* Not enough tokens were provided */
+#DEFINE_CONSTANT JSMN_ERROR_NOMEM -1
+
+/* Invalid character inside JSON string */
+#DEFINE_CONSTANT JSMN_ERROR_INVAL -2
+
+/* The string is not a full JSON packet, more bytes expected */
+#DEFINE_CONSTANT JSMN_ERROR_PART -3
+
+#DEFINE_CONSTANT JSMN_ERROR_OUT_OF_RANGE -4
+
+#DEFINE_CONSTANT JSMN_SUCCESS 0
+
+/**
+ * JSON token description.
+ * @param		type	type (object, array, string etc.)
+ * @param		start	start position in JSON data string
+ * @param		end		end position in JSON data string
+ */
+structure JsmnToken {
+	integer type;
+	signed_integer start;
+	signed_integer end;
+	signed_integer size;
+};
+
+/**
+ * JSON parser. Contains an array of token blocks available. Also stores
+ * the string being parsed now and current position in that string
+ */
+structure JsmnParser {
+	integer pos; /* offset in the JSON string */
+	integer toknext; /* next token to allocate */
+	signed_integer toksuper; /* superior token node, e.g parent object or array */
+};
+
+/**
+ * Creates a new parser based over a given  buffer with an array of tokens
+ * available.
+ */
+function jsmn_init( byref JsmnParser parser ) {
+	parser.pos = 1;
+	parser.toknext = 0;
+	parser.toksuper = -1;
+}
+
+function jsmn_print_parser( string call_site, byref JsmnParser parser, string json ){
+
+	print( "{ %s } parser [ position (charachter) / next token / super token ] :: %d (%c), %d, %d", call_site, parser.pos, byte( json, parser.pos ), parser.toknext, parser.toksuper );
+
+}
+
+function jsmn_print_token( string call_site, byref JsmnToken token, string json ){
+
+	cswitch( token.type ){
+		case (JSMN_TYPE_UNDEFINED): {
+			print( "{ %s } token [ type / start / end / size / content ] :: undefined, %d, %d, %d, %s", call_site, token.start, token.end, token.size, mid( json, token.start, token.end - token.start ) );
+			break;
+		}
+		case (JSMN_TYPE_OBJECT):{
+			print( "{ %s } token [ type / start / end / size / content  ] :: object, %d, %d, %d, %s", call_site, token.start, token.end, token.size, mid( json, token.start, token.end - token.start ) );
+			break;
+		}
+		case (JSMN_TYPE_ARRAY):{
+			print( "{ %s } token [ type / start / end / size / content ] :: array, %d, %d, %d, %s", call_site, token.start, token.end, token.size, mid( json, token.start, token.end - token.start ) );
+			break;
+		}
+		case (JSMN_TYPE_STRING):{
+			print( "{ %s } token [ type / start / end / size / content ] :: string, %d, %d, %d, %s", call_site, token.start, token.end, token.size, mid( json, token.start, token.end - token.start )  );
+			break;
+		}
+		case (JSMN_TYPE_PRIMITIVE):{
+			print( "{ %s } token [ type / start / end / size / content ] :: primitive, %d, %d, %d, %s", call_site, token.start, token.end, token.size, mid( json, token.start, token.end - token.start )  );
+			break;
+		}
+	}
+
+}
+
+/**
+ * Fills token type and boundaries.
+ */
+function jsmn_fill_token( byref JsmnToken token, integer type, integer start, integer end) {
+	token.type = type;
+	token.start = start;
+	token.end = end;
+	token.size = 0;
+}
+
+/**
+ * Allocates a fresh unused token from the token pull.
+ */
+integer_function jsmn_alloc_token( byref JsmnParser parser, byref JsmnToken tokens[], integer num_tokens ){
+
+	if( parser.toknext >= num_tokens ){
+		return ( JSMN_ERROR_NOMEM );
+	}
+
+	tokens[ parser.toknext ].start = -1;
+	tokens[ parser.toknext ].end   = -1;
+	tokens[ parser.toknext ].size  = 0;
+
+	parser.toknext = 1 + parser.toknext;
+
+	return ( parser.toknext - 1 );
+}
+
+/**
+ * Fills next token with JSON string.
+ */
+integer_function jsmn_parse_string( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
+
+	integer token;
+	integer start;
+
+	integer c;
+	integer i;
+
+	start = parser.pos;
+
+	parser.pos = 1 + parser.pos;
+
+	while( parser.pos < length ){
+
+		c = byte( js, parser.pos );
+
+		if( c = DBLQUOTE ){
+
+			token = jsmn_alloc_token( parser, tokens, num_tokens );
+
+			if( token < 0 ){
+				parser.pos = start;
+				return ( JSMN_ERROR_NOMEM );
+			}
+
+			jsmn_fill_token( tokens[ token ], JSMN_TYPE_STRING, start + 1, parser.pos );
+
+			return ( 0 );
+
+		}
+
+		if( c = BACKSLASH && parser.pos + 1 < length ){
+
+			parser.pos = 1 + parser.pos;
+
+			cswitch( byte( js, parser.pos ) ){
+				case (DBLQUOTE): case ('/'): case ('\\'): case ('b'):
+				case ('f'):      case ('r'): case ('n'):  case ('t'):
+					break;
+
+				case ('u'):
+					//
+					// Intervention time! I am not going to bother dealing with stupid unicode characters if you want know
+					// how to do this though you can take a look at the following bit of code:
+					// https://github.com/zserge/jsmn/blob/master/jsmn.c#L123
+					//
+					break;
+
+				default: {
+					parser.pos = start;
+					return ( JSMN_ERROR_INVAL );
+				}
+			}
+
+		}
+
+		parser.pos = 1 + parser.pos;
+	}
+
+	parser.pos = start;
+
+	return ( JSMN_ERROR_PART );
+
+}
+
+/**
+ * Fills next available token with JSON primitive.
+ */
+integer_function jsmn_parse_primitive( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
+
+	integer token;
+	integer start;
+
+	integer c;
+
+	start = parser.pos;
+
+	while( parser.pos < length ){
+
+		c = byte( js, parser.pos );
+
+		cswitch( c ){
+
+			case (TAB): case (CR): case (LF): case (' '):
+			case (','): case (']' ): case ('}'): {
+
+				token = jsmn_alloc_token( parser, tokens, num_tokens );
+
+				if( token < 0 ){
+					parser.pos = start;
+					return ( JSMN_ERROR_NOMEM );
+				}
+
+				jsmn_fill_token( tokens[ token ], JSMN_TYPE_PRIMITIVE, start, parser.pos );
+				parser.pos = parser.pos - 1;
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse_primitive", parser, js ); #ENDIF
+
+				return ( 0 );
+			}
+
+			default:
+				break;
+		}
+
+		if( c < 32 || c >= 127 ){
+			parser.pos = start;
+			return ( JSMN_ERROR_INVAL );
+		}
+
+		parser.pos = 1 + parser.pos;
+
+	}
+
+	parser.pos = start;
+	return ( JSMN_ERROR_PART );
+
+}
+
+/**
+ * Parse JSON string and fill tokens.
+ */
+//int jsmn_parse(jsmn_parser *parser, const char *js, size_t len, jsmntok_t *tokens, unsigned int num_tokens) {
+integer_function jsmn_parse( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
+
+	integer r;
+	integer i;
+	integer token;
+	integer count;
+
+	integer c;
+	integer type;
+
+	count = parser.toknext;
+
+	while( parser.pos < length ){
+
+		c = byte( js, parser.pos );
+
+		if( c = 65535 )
+			return ( JSMN_ERROR_OUT_OF_RANGE );
+
+		cswitch( c ){
+
+			case (TAB): case (CR): case (LF): case (' '): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (whitespace)", parser, js ); #ENDIF
+
+				break;
+
+			}
+
+			case ('{'): case ('['): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (open type)", parser, js ); #ENDIF
+
+				count = 1 + count;
+
+				token = jsmn_alloc_token( parser, tokens, num_tokens );
+
+				if( token < 0 )
+					return ( JSMN_ERROR_NOMEM );
+
+				if( parser.toksuper <> -1 )
+					tokens[ parser.toksuper ].size = 1 + tokens[ parser.toksuper ].size;
+
+				tokens[ token ].start = parser.pos;
+				parser.toksuper = parser.toknext - 1;
+
+				if( c = '{' )
+					tokens[ token ].type = JSMN_TYPE_OBJECT;
+				else
+					tokens[ token ].type = JSMN_TYPE_ARRAY;
+
+				break;
+			}
+			case ('}'): case (']'): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (close type)", parser, js ); #ENDIF
+
+				if( c = '}' )
+					type = JSMN_TYPE_OBJECT;
+				else
+					type = JSMN_TYPE_ARRAY;
+
+				for( i = parser.toknext to 0 step -1 ){
+
+					token = i;
+
+					if( tokens[ token ].start <> -1 && tokens[ token ].end = -1 ){
+						if( tokens[ token ].type <> type )
+							return ( JSMN_ERROR_INVAL );
+
+						parser.toksuper = -1;
+						tokens[ token ].end = parser.pos + 1;
+						break;
+					}
+				}
+
+				/* Error if unmatched closing bracket */
+				if( i = -1 )
+					return ( JSMN_ERROR_INVAL );
+
+				for( i = i to 0 step -1 ){
+
+					token = i;
+
+					if( tokens[ token ].start <> -1 && tokens[ token ].end = -1 ){
+
+						parser.toksuper = i;
+						break;
+
+					}
+
+				}
+
+				break;
+			}
+			case (DBLQUOTE): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (string)", parser, js ); #ENDIF
+
+				r = jsmn_parse_string( parser, js, length, tokens, num_tokens );
+
+				if( r < 0 )
+					return ( r );
+
+				count = 1 + count;
+
+				if( parser.toksuper <> -1 )
+					tokens[ parser.toksuper ].size = 1 + tokens[ parser.toksuper ].size;
+
+				break;
+			}
+			case (':'): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (color)", parser, js ); #ENDIF
+
+				parser.toksuper = parser.toknext - 1;
+				break;
+			}
+			case (','): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (whitespace)", parser, js ); #ENDIF
+
+				if(
+					   parser.toksuper <> -1
+					&& tokens[ parser.toksuper ].type <> JSMN_TYPE_ARRAY
+					&& tokens[ parser.toksuper ].type <> JSMN_TYPE_OBJECT
+				){
+
+					for( i = parser.toknext - 1 to 0 step -1 ){
+
+						if( tokens[ i ].type = JSMN_TYPE_ARRAY || tokens[ i ].type = JSMN_TYPE_OBJECT ){
+
+							if( tokens[ i ].start <> -1 && tokens[ i ].end = -1 ){
+
+								parser.toksuper = i;
+								break;
+
+							}
+
+						}
+
+					}
+
+				}
+
+				break;
+			}
+			/* In strict mode primitives are: numbers and booleans */
+			case ('-'): case ('0'): case ('1'): case ('2'): case ('3'): case ('4'): case ('5'): case ('6'): case ('7'): case ('8'): case ('9'):
+			case ('t'): case ('f'):
+			case ('n'): {
+
+				#IF_DEFINED JSMN_DEBUG jsmn_print_parser( "jsmn_parse (primitive)", parser, js ); #ENDIF
+
+				/* And they must not be keys of the object */
+				//
+				// For reasons beyond me this throws off the parsing of primitives
+				//
+				// if( parser.toksuper <> -1 ){
+				//
+				// 	if( tokens[ parser.toksuper ].type = JSMN_TYPE_OBJECT )
+				// 		return ( JSMN_ERROR_INVAL );
+				//
+				// 	if( tokens[ parser.toksuper ].type = JSMN_TYPE_STRING
+				// 	 && tokens[ parser.toksuper ].size <> 0
+				// 	)
+				// 		return ( JSMN_ERROR_INVAL );
+				//
+				// }
+
+				r = jsmn_parse_primitive(parser, js, length, tokens, num_tokens);
+
+				if( r < 0 )
+					return ( r );
+
+				count = 1 + count;
+
+				if( parser.toksuper <> -1 )
+					tokens[ parser.toksuper ].size = 1 + tokens[ parser.toksuper ].size;
+
+				break;
+			}
+			default:
+				return ( JSMN_ERROR_INVAL );
+
+		}
+
+		parser.pos = 1 + parser.pos;
+	}
+
+	for ( i = parser.toknext - 1 to 0 step -1 ){
+
+		/* Unmatched opened object or array */
+		if( tokens[ i ].start <> 0 && tokens[ i ].end = 0)
+			return ( JSMN_ERROR_PART );
+
+	}
+
+	return ( count );
+}
