@@ -144,7 +144,7 @@ function jsmn_fill_token( byref JsmnToken token, integer type, integer start, in
 /**
  * Allocates a fresh unused token from the token pull.
  */
-integer_function jsmn_alloc_token( byref JsmnParser parser, byref JsmnToken tokens[], integer num_tokens ){
+signed_integer_function jsmn_alloc_token( byref JsmnParser parser, byref JsmnToken tokens[], integer num_tokens ){
 
 	if( parser.toknext >= num_tokens ){
 		return ( JSMN_ERROR_NOMEM );
@@ -162,7 +162,7 @@ integer_function jsmn_alloc_token( byref JsmnParser parser, byref JsmnToken toke
 /**
  * Fills next token with JSON string.
  */
-integer_function jsmn_parse_string( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
+signed_integer_function jsmn_parse_string( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
 
 	integer token;
 	integer start;
@@ -230,7 +230,7 @@ integer_function jsmn_parse_string( byref JsmnParser parser, string js, integer 
 /**
  * Fills next available token with JSON primitive.
  */
-integer_function jsmn_parse_primitive( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
+signed_integer_function jsmn_parse_primitive( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
 
 	integer token;
 	integer start;
@@ -285,7 +285,7 @@ integer_function jsmn_parse_primitive( byref JsmnParser parser, string js, integ
  * Parse JSON string and fill tokens.
  */
 //int jsmn_parse(jsmn_parser *parser, const char *js, size_t len, jsmntok_t *tokens, unsigned int num_tokens) {
-integer_function jsmn_parse( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
+signed_integer_function jsmn_parse( byref JsmnParser parser, string js, integer length, byref JsmnToken tokens[], integer num_tokens ){
 
 	integer r;
 	integer i;
